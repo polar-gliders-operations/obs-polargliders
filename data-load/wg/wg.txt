@@ -1,0 +1,3 @@
+python3 wg_dataservice.py --getReportData --vehicle 2107397055 --startDate 2023-03-06T18:29:26Z --endDate 2023-03-06T18:44:26Z
+python3 wg_dataservice.py --getReportData --vehicle 2107397055 --startDate 2023-03-06T18:29:41Z --endDate 2023-03-06T18:44:41Z
+[]
