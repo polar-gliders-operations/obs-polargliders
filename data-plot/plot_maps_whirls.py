@@ -211,7 +211,7 @@ def calculate_shear_gradient_direction(adt, df_sg):
 
     # Average Seaglider distance between the last 10 dives
     # gsw.distance returns an array of N-1 distances
-    distances = gsw.distance(sg267_lon_fix, sg267_lat_fix)[0] / 1e3
+    distances = gsw.distance(sg267_lon_fix, sg267_lat_fix) / 1e3
     step_km = np.nanmean(distances[-10:]) if len(distances) >= 10 else 1.0
     
     fd_km = 1.0             
