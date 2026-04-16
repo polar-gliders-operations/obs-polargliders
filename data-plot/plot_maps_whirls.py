@@ -215,8 +215,8 @@ def calculate_shear_gradient_direction(adt, df_sg):
     step_km = np.nanmean(distances[-10:]) if len(distances) >= 10 else 1.0
     
     fd_km = 1.0             
-    min_turning_angle = -np.deg2rad(45)  
-    max_turning_angle = np.deg2rad(45)
+    min_turning_angle = -np.deg2rad(180) # Allow all directions, but we can restrict if desired  
+    max_turning_angle = np.deg2rad(180) # Allow all directions, but we can restrict if desired
 
     lats = adt.latitude.values
     lons = adt.longitude.values
@@ -794,7 +794,7 @@ if shear_deg is not None:
     lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
     # Scale parameter adjusts arrow length. Adjust to fit your map visually!
     ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
-              color='k', scale=15, width=0.005, zorder=25)
+              color='k', scale=20, width=0.005, zorder=25)
     
 # add small map
 inset_map(fig, bextent, inset_pos=(0.05, 0.75, 0.18, 0.18))
@@ -842,7 +842,7 @@ if shear_deg is not None:
     lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
     # Scale parameter adjusts arrow length. Adjust to fit your map visually!
     ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
-              color='k', scale=15, width=0.005, zorder=25)
+              color='k', scale=20, width=0.005, zorder=25)
    
 # add small map
 inset_map(fig, bextent, inset_pos=(0.05, 0.75, 0.18, 0.18))
@@ -890,7 +890,7 @@ if shear_deg is not None:
     lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
     # Scale parameter adjusts arrow length. Adjust to fit your map visually!
     ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
-              color='k', scale=15, width=0.005, zorder=25)
+              color='k', scale=20, width=0.005, zorder=25)
    
 min_lat = sg.latitude.values[-1] - 1
 max_lat = sg.latitude.values[-1] + 1
@@ -944,7 +944,7 @@ if shear_deg is not None:
     lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
     # Scale parameter adjusts arrow length. Adjust to fit your map visually!
     ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
-              color='k', scale=15, width=0.005, zorder=25)
+              color='k', scale=20, width=0.005, zorder=25)
    
 # add small map
 inset_map(fig, sextent, inset_pos=(0.05, 0.75, 0.18, 0.18))
