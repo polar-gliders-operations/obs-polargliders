@@ -26,6 +26,9 @@ import cartopy.crs as ccrs
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 from PIL import Image
 import gsw
+from xinvert import FiniteDiff
+from campaign_optimizer import *
+from scipy.interpolate import RegularGridInterpolator
 
 # set font properties
 
@@ -195,6 +198,103 @@ def plot_sla(ax,fig):
 #     im = ax.pcolor(sst.lon,sst.lat,sst.gradient,cmap=cmo.thermal,vmin=0,vmax=0.1,zorder=1)
 #     plt.colorbar(im,ax=ax, label='Sea surface temperature gradient (°C/km)\nGHRSST MUR',pad=0.01)
 #     ax.set_title(sst.time.values.astype('datetime64[D]'),y=1,x=0.5)
+
+################## ------------------ Calculate Shear Gradient Direction ------------------ ##################
+
+def calculate_shear_gradient_direction(adt, df_sg):
+    """
+    Calculates the optimal direction based on the strongest shear gradient 
+    relative to the latest SG267 position.
+    """
+    sg267_lon_fix = df_sg['longitude'].values
+    sg267_lat_fix = df_sg['latitude'].values
+
+    # Average Seaglider distance between the last 10 dives
+    # gsw.distance returns an array of N-1 distances
+    distances = gsw.distance(sg267_lon_fix, sg267_lat_fix) / 1e3
+    step_km = np.nanmean(distances[-10:]) if len(distances) >= 10 else 1.0
+    
+    fd_km = 1.0             
+    min_turning_angle = -np.deg2rad(180) # Allow all directions, but we can restrict if desired  
+    max_turning_angle = np.deg2rad(180) # Allow all directions, but we can restrict if desired
+
+    lats = adt.latitude.values
+    lons = adt.longitude.values
+    lat, lon = sg267_lat_fix[-1], sg267_lon_fix[-1]
+
+    lat_min, lat_max = -38, -32
+    lon_min, lon_max = 10, 20
+
+    # Compute strain
+    fd = FiniteDiff({'X':'longitude', 'Y':'latitude'},
+                    BCs={'X':('extend', 'extend'),
+                         'Y':('extend', 'extend')}, 
+                    coords='lat-lon')
+
+    ugos_x, ugos_y = fd.grad(adt.ugos, ['X', 'Y'])
+    vgos_x, vgos_y = fd.grad(adt.vgos, ['X', 'Y'])
+
+    Sn = ugos_x - vgos_y
+    Ss = vgos_x + ugos_y
+
+    f = 2 * 7.292e-5 * np.sin(np.deg2rad(adt.latitude.mean('latitude')))
+    sr = np.sqrt(Sn ** 2 + Ss ** 2) / np.abs(f) 
+
+    # Campaign optimization setup
+    step_margin_lat = km_to_deg_lat(step_km)
+    
+    if len(sg267_lat_fix) > 1:
+        prev_dir = (sg267_lat_fix[-1]-sg267_lat_fix[-2], sg267_lon_fix[-1]-sg267_lon_fix[-2])
+        theta0 = np.arctan2(prev_dir[1], prev_dir[0])
+        angles = theta0 + np.linspace(min_turning_angle, max_turning_angle, 50, endpoint=False)
+    else:
+        angles = np.linspace(0, 2*np.pi, 160, endpoint=False)
+
+    directions = np.column_stack((np.cos(angles), np.sin(angles)))
+
+    strain_t = sr.values
+    interp_strain = build_interpolator(strain_t, lats, lons)
+
+    nan_mask = np.isnan(strain_t)
+    interp_nan = RegularGridInterpolator(
+        (lats, lons),
+        nan_mask.astype(float),
+        bounds_error=False,
+        fill_value=1.0) 
+
+    gains = []
+
+    for d in directions:
+        lat_trial = lat + d[0] * km_to_deg_lat(step_km)
+        lon_trial = lon + d[1] * km_to_deg_lon(step_km, lat)
+
+        if not inside_domain(lat_trial, lon_trial, lat_min, lat_max, lon_min, lon_max, margin=step_margin_lat):
+            continue
+
+        if path_hits_nan(interp_nan, lat, lon, d, step_km, lat):
+            continue
+
+        # CALCULATE GAIN (Assuming you want to maximize strain rate)
+        try:
+            gain = interp_strain((lat_trial, lon_trial))
+        except ValueError:
+            gain = np.nan
+
+        if np.isfinite(gain):
+            gains.append((gain, d))
+
+    if not gains:
+        # Fallback if no valid direction is found
+        return 0, 0, None
+
+    gains.sort(key=lambda x: x[0], reverse=True)
+    best_gain, best_dir = gains[0]
+
+    # Calculate geographic bearing (0 is North, positive is clockwise)
+    direction_deg = np.rad2deg(np.arctan2(best_dir[1], best_dir[0])) % 360
+    
+    # Return dLon (U), dLat (V), and the bearing angle
+    return best_dir[1], best_dir[0], direction_deg
 
 ################## ------------------ SWOT PASSES ------------------ ##################
 
@@ -663,6 +763,12 @@ def show_legend(ax, out, *, loc='lower left', fontsize=12, frameon=True):
         #Line2D([0], [0], marker='o', linestyle='', markerfacecolor='r',
         #       markeredgecolor='k', label=f'Whale survey target, {kms} km, ETA: {eta}')
     ])
+    
+    if shear_deg is not None:
+            legend_elements.append(
+                Line2D([0], [0], color='k', lw=2, marker='>', 
+                    label=f'Strongest shear gradient: {shear_deg:.0f}°')
+            )
 
     # Draw the legend
     ax.legend(handles=legend_elements, loc=loc, frameon=frameon, fontsize=fontsize)
@@ -682,6 +788,14 @@ ds = sg675(ax)
 wg = wg1170(ax, line_color='C1')
 # wg = plot_wg(wg_lon, wg_lat, ax)
 
+u_dir, v_dir, shear_deg = calculate_shear_gradient_direction(adt, sg)
+if shear_deg is not None:
+    # Plot an arrow at the latest SG267 position
+    lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
+    # Scale parameter adjusts arrow length. Adjust to fit your map visually!
+    ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
+              color='k', scale=20, width=0.005, zorder=25)
+    
 # add small map
 inset_map(fig, bextent, inset_pos=(0.05, 0.75, 0.18, 0.18))
 
@@ -722,6 +836,14 @@ ds = sg675(ax)
 wg = wg1170(ax, line_color='C1')
 # wg = plot_wg(wg_lon, wg_lat, ax)
 
+u_dir, v_dir, shear_deg = calculate_shear_gradient_direction(adt, sg)
+if shear_deg is not None:
+    # Plot an arrow at the latest SG267 position
+    lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
+    # Scale parameter adjusts arrow length. Adjust to fit your map visually!
+    ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
+              color='k', scale=20, width=0.005, zorder=25)
+   
 # add small map
 inset_map(fig, bextent, inset_pos=(0.05, 0.75, 0.18, 0.18))
 
@@ -762,6 +884,14 @@ ds = sg675(ax)
 wg = wg1170(ax, size="small", line_color='C1')
 # wg = plot_wg(wg_lon, wg_lat, ax)
 
+u_dir, v_dir, shear_deg = calculate_shear_gradient_direction(adt, sg)
+if shear_deg is not None:
+    # Plot an arrow at the latest SG267 position
+    lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
+    # Scale parameter adjusts arrow length. Adjust to fit your map visually!
+    ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
+              color='k', scale=20, width=0.005, zorder=25)
+   
 min_lat = sg.latitude.values[-1] - 1
 max_lat = sg.latitude.values[-1] + 1
 min_lon = sg.longitude.values[-1] - 1.667
@@ -808,6 +938,14 @@ sg = sgx(ax,size="small")
 wg = wg1170(ax,size="small", line_color='C1')
 # wg = plot_wg(wg_lon, wg_lat, ax)
 
+u_dir, v_dir, shear_deg = calculate_shear_gradient_direction(adt, sg)
+if shear_deg is not None:
+    # Plot an arrow at the latest SG267 position
+    lon0, lat0 = sg['longitude'].values[-1], sg['latitude'].values[-1]
+    # Scale parameter adjusts arrow length. Adjust to fit your map visually!
+    ax.quiver(lon0, lat0, u_dir, v_dir, transform=ccrs.PlateCarree(), 
+              color='k', scale=20, width=0.005, zorder=25)
+   
 # add small map
 inset_map(fig, sextent, inset_pos=(0.05, 0.75, 0.18, 0.18))
 
